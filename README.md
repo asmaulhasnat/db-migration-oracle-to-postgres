@@ -52,6 +52,8 @@ Requires Python 3.10 or higher.
 
 ```bash
 python3 -m venv venv
+# or
+python -m venv venv
 ```
 
 ### 4. Activate the virtual environment
