@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DB Migrator — Oracle → PostgreSQL</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #161b27;
+    --surface2: #1e2535;
+    --border: #2a3045;
+    --border2: #3a4560;
+    --text: #e8eaf0;
+    --muted: #7a8298;
+    --accent: #4f8ef7;
+    --accent-dim: #1a2d4a;
+    --oracle: #c8522a;
+    --oracle-dim: #2a1a0f;
+    --pg: #336791;
+    --pg-dim: #0f1d2a;
+    --success: #3dba6f;
+    --success-dim: #0d2b1a;
+    --warning: #f5a623;
+    --danger: #e05252;
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'Inter', sans-serif;
+    --radius: 8px;
+    --radius-lg: 12px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; min-height: 100vh; }
+
+  /* Layout */
+  .app { display: grid; grid-template-rows: 56px 1fr; min-height: 100vh; }
+  .header { background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 24px; gap: 16px; }
+  .header-logo { font-family: var(--mono); font-size: 15px; font-weight: 500; color: var(--text); letter-spacing: -0.5px; }
+  .header-logo span { color: var(--accent); }
+  .header-badges { display: flex; gap: 8px; margin-left: auto; }
+  .badge { font-family: var(--mono); font-size: 11px; padding: 3px 10px; border-radius: 4px; font-weight: 500; display: flex; align-items: center; gap: 5px; }
+  .badge-oracle { background: var(--oracle-dim); color: var(--oracle); border: 1px solid #3d2010; }
+  .badge-pg { background: var(--pg-dim); color: #6baed6; border: 1px solid #1a3a55; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .dot.blink { animation: blink 1.5s ease-in-out infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  /* Main panels */
+  .main { display: grid; grid-template-columns: 280px 1fr 320px; overflow: hidden; height: calc(100vh - 56px); }
+  .panel { overflow-y: auto; border-right: 1px solid var(--border); }
+  .panel:last-child { border-right: none; }
+  .panel-header { padding: 16px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); z-index: 10; }
+  .panel-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 8px; }
+  .panel-subtitle { font-size: 12px; color: var(--muted); }
+
+  /* DB selectors */
+  .db-selector { display: flex; gap: 6px; }
+  .db-btn { flex: 1; padding: 6px 10px; border-radius: var(--radius); border: 1px solid var(--border); background: transparent; color: var(--muted); font-size: 12px; font-family: var(--sans); cursor: pointer; transition: all 0.15s; }
+  .db-btn.active-oracle { background: var(--oracle-dim); border-color: var(--oracle); color: var(--oracle); }
+  .db-btn.active-pg { background: var(--pg-dim); border-color: var(--pg); color: #6baed6; }
+  .db-btn:hover:not(.active-oracle):not(.active-pg) { border-color: var(--border2); color: var(--text); }
+
+  /* Table list */
+  .table-search { width: 100%; padding: 7px 10px; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font-size: 13px; outline: none; margin-bottom: 4px; }
+  .table-search:focus { border-color: var(--accent); }
+  .table-search::placeholder { color: var(--muted); }
+  .table-list { padding: 8px; }
+  .table-item { padding: 8px 10px; border-radius: var(--radius); cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 8px; transition: background 0.1s; margin-bottom: 2px; }
+  .table-item:hover { background: var(--surface2); }
+  .table-item.selected { background: var(--accent-dim); border: 1px solid var(--accent); }
+  .table-item.selected-pg { background: var(--pg-dim); border: 1px solid #336791; }
+  .table-name { font-family: var(--mono); font-size: 12px; color: var(--text); }
+  .table-rows { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+  .schema-tag { font-size: 10px; padding: 1px 5px; border-radius: 3px; background: var(--surface2); color: var(--muted); font-family: var(--mono); }
+
+  /* Center panel - mapping */
+  .center-panel { display: flex; flex-direction: column; }
+  .mapping-area { flex: 1; overflow-y: auto; padding: 20px; }
+  .step-indicator { display: flex; gap: 0; margin-bottom: 24px; }
+  .step { flex: 1; padding: 10px 16px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); border-bottom: 2px solid var(--border); display: flex; align-items: center; gap: 6px; }
+  .step.active { color: var(--accent); border-color: var(--accent); }
+  .step.done { color: var(--success); border-color: var(--success); }
+  .step-num { width: 20px; height: 20px; border-radius: 50%; border: 1.5px solid currentColor; display: flex; align-items: center; justify-content: center; font-size: 10px; }
+
+  /* Table mapping header */
+  .table-pair { display: grid; grid-template-columns: 1fr auto 1fr; gap: 12px; align-items: center; margin-bottom: 20px; }
+  .table-box { padding: 10px 14px; border-radius: var(--radius); border: 1px solid var(--border); font-family: var(--mono); font-size: 13px; }
+  .table-box-oracle { background: var(--oracle-dim); border-color: var(--oracle); color: var(--oracle); }
+  .table-box-pg { background: var(--pg-dim); border-color: #336791; color: #6baed6; }
+  .table-box-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; opacity: 0.7; }
+  .arrow-icon { color: var(--muted); font-size: 20px; }
+
+  /* Column mappings */
+  .mappings-header { display: grid; grid-template-columns: 1fr 40px 1fr 100px 36px; gap: 8px; padding: 6px 10px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); font-weight: 600; margin-bottom: 4px; }
+  .mapping-row { display: grid; grid-template-columns: 1fr 40px 1fr 100px 36px; gap: 8px; align-items: center; padding: 6px 10px; border-radius: var(--radius); border: 1px solid var(--border); margin-bottom: 6px; background: var(--surface); transition: border-color 0.15s; }
+  .mapping-row:hover { border-color: var(--border2); }
+  .mapping-row.has-mapping { border-color: #2a3a50; }
+  .mapping-select { width: 100%; padding: 5px 8px; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 12px; font-family: var(--mono); outline: none; cursor: pointer; }
+  .mapping-select:focus { border-color: var(--accent); }
+  .mapping-arrow { text-align: center; color: var(--muted); font-size: 14px; }
+  .default-input { width: 100%; padding: 5px 8px; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; color: var(--warning); font-size: 12px; font-family: var(--mono); outline: none; }
+  .default-input:focus { border-color: var(--warning); }
+  .default-input::placeholder { color: var(--muted); font-style: italic; }
+  .col-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; padding: 2px 6px; border-radius: 4px; font-family: var(--mono); }
+  .col-type { background: var(--surface2); color: var(--muted); }
+  .col-pk { background: #2a1f00; color: var(--warning); }
+  .col-notnull { background: #1a1530; color: #9b8fd4; }
+  .btn-remove { width: 28px; height: 28px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--muted); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 14px; transition: all 0.15s; }
+  .btn-remove:hover { background: #2a1515; border-color: var(--danger); color: var(--danger); }
+
+  /* Add mapping button */
+  .btn-add { display: flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: var(--radius); border: 1px dashed var(--border2); background: transparent; color: var(--muted); font-size: 13px; cursor: pointer; width: 100%; justify-content: center; margin-top: 8px; transition: all 0.15s; }
+  .btn-add:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+
+  /* Options panel */
+  .options-section { padding: 16px; border-bottom: 1px solid var(--border); }
+  .options-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted); margin-bottom: 12px; }
+  .option-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .option-label { font-size: 13px; color: var(--text); }
+  .option-desc { font-size: 11px; color: var(--muted); margin-top: 1px; }
+  .toggle { position: relative; width: 36px; height: 20px; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider { position: absolute; inset: 0; background: var(--border2); border-radius: 10px; cursor: pointer; transition: background 0.2s; }
+  .toggle-slider::before { content: ''; position: absolute; width: 14px; height: 14px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: transform 0.2s; }
+  .toggle input:checked + .toggle-slider { background: var(--accent); }
+  .toggle input:checked + .toggle-slider::before { transform: translateX(16px); }
+  .number-input { width: 80px; padding: 5px 8px; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 13px; font-family: var(--mono); outline: none; text-align: right; }
+  .number-input:focus { border-color: var(--accent); }
+
+  /* Run button */
+  .run-section { padding: 16px; }
+  .btn-preview { width: 100%; padding: 9px; border-radius: var(--radius); border: 1px solid var(--border2); background: transparent; color: var(--text); font-size: 13px; font-family: var(--sans); cursor: pointer; margin-bottom: 8px; transition: all 0.15s; }
+  .btn-preview:hover { background: var(--surface2); }
+  .btn-migrate { width: 100%; padding: 11px; border-radius: var(--radius); border: none; background: var(--accent); color: white; font-size: 14px; font-weight: 600; font-family: var(--sans); cursor: pointer; transition: all 0.15s; display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .btn-migrate:hover { background: #3a7ce8; }
+  .btn-migrate:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-migrate.running { background: #1a3d70; }
+
+  /* Result card */
+  .result-card { margin: 16px; padding: 14px; border-radius: var(--radius-lg); border: 1px solid var(--border); }
+  .result-card.success { background: var(--success-dim); border-color: #1a5a30; }
+  .result-card.error { background: #2a0f0f; border-color: #5a2020; }
+  .result-title { font-size: 13px; font-weight: 600; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+  .result-title.success { color: var(--success); }
+  .result-title.error { color: var(--danger); }
+  .result-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .stat-box { padding: 8px 10px; background: rgba(0,0,0,0.3); border-radius: 6px; }
+  .stat-val { font-family: var(--mono); font-size: 18px; font-weight: 500; }
+  .stat-lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 1px; }
+  .stat-box.green .stat-val { color: var(--success); }
+  .stat-box.blue .stat-val { color: var(--accent); }
+  .stat-box.red .stat-val { color: var(--danger); }
+  .stat-box.orange .stat-val { color: var(--warning); }
+
+  /* Preview table */
+  .preview-area { margin: 12px 16px; }
+  .preview-table-wrap { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); }
+  .preview-table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 11px; }
+  .preview-table th { padding: 6px 10px; background: var(--surface2); color: var(--muted); text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; font-weight: 500; }
+  .preview-table td { padding: 5px 10px; border-bottom: 1px solid var(--border); color: var(--text); white-space: nowrap; }
+  .preview-table tr:last-child td { border-bottom: none; }
+  .preview-table tr:hover td { background: var(--surface2); }
+
+  /* Empty states */
+  .empty-state { padding: 40px 20px; text-align: center; color: var(--muted); }
+  .empty-icon { font-size: 32px; margin-bottom: 12px; }
+  .empty-text { font-size: 13px; line-height: 1.6; }
+
+  /* Loading spinner */
+  .spinner { width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 0.7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Progress bar */
+  .progress-wrap { margin: 12px 0; }
+  .progress-bar { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .progress-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.3s; }
+  .progress-label { font-size: 11px; color: var(--muted); margin-top: 4px; font-family: var(--mono); }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #4a5570; }
+
+  /* Notification toast */
+  .toast { position: fixed; bottom: 24px; right: 24px; padding: 10px 16px; border-radius: var(--radius); font-size: 13px; z-index: 999; animation: slideIn 0.2s ease; }
+  .toast-info { background: var(--accent-dim); border: 1px solid var(--accent); color: var(--accent); }
+  .toast-success { background: var(--success-dim); border: 1px solid var(--success); color: var(--success); }
+  .toast-error { background: #2a0f0f; border: 1px solid var(--danger); color: var(--danger); }
+  @keyframes slideIn { from { transform: translateY(10px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+  /* Mode tag */
+  .mode-tag { font-size: 10px; padding: 2px 6px; border-radius: 4px; font-family: var(--mono); vertical-align: middle; margin-left: 6px; }
+  .mode-simulation { background: #2a2000; color: var(--warning); }
+  .mode-live { background: var(--success-dim); color: var(--success); }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- Header -->
+  <header class="header">
+    <div class="header-logo">db<span>migrator</span></div>
+    <div style="font-size:12px;color:var(--muted);margin-left:4px">Oracle → PostgreSQL</div>
+    <div class="header-badges">
+      <div class="badge badge-oracle" id="oracle-badge">
+        <span class="dot" id="oracle-dot"></span>
+        <span id="oracle-status">Oracle</span>
+      </div>
+      <div class="badge badge-pg" id="pg-badge">
+        <span class="dot" id="pg-dot"></span>
+        <span id="pg-status">PostgreSQL</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main 3-column layout -->
+  <div class="main">
+
+    <!-- LEFT: Source/Target table selector -->
+    <div class="panel" id="left-panel">
+      <div class="panel-header">
+        <div class="panel-title">Tables</div>
+        <div class="db-selector">
+          <button class="db-btn active-oracle" id="src-oracle-btn" onclick="switchTableView('source','oracle')">Oracle Source</button>
+          <button class="db-btn" id="src-pg-btn" onclick="switchTableView('source','pg')">PG Target</button>
+        </div>
+      </div>
+      <div style="padding:8px 8px 0">
+        <input class="table-search" id="table-search" placeholder="Search tables…" oninput="filterTables()" />
+      </div>
+      <div class="table-list" id="table-list">
+        <div class="empty-state"><div class="empty-icon">⏳</div><div class="empty-text">Loading tables…</div></div>
+      </div>
+    </div>
+
+    <!-- CENTER: Column mapping -->
+    <div class="panel center-panel" style="border-right:1px solid var(--border)">
+      <div class="panel-header">
+        <div class="panel-title">Column Mapping</div>
+        <div class="panel-subtitle" id="mapping-subtitle">Select source and target tables to begin</div>
+      </div>
+      <div class="mapping-area" id="mapping-area">
+        <div class="empty-state">
+          <div class="empty-icon">🗂️</div>
+          <div class="empty-text">Select a source table from Oracle<br>and a target table from PostgreSQL<br>to configure column mappings.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: Config + Run -->
+    <div class="panel" style="display:flex;flex-direction:column">
+      <div class="panel-header">
+        <div class="panel-title">Migration Config</div>
+      </div>
+
+      <div class="options-section">
+        <div class="options-title">Options</div>
+        <div class="option-row">
+          <div>
+            <div class="option-label">Truncate target first</div>
+            <div class="option-desc">Clear all rows before insert</div>
+          </div>
+          <label class="toggle"><input type="checkbox" id="opt-truncate"><span class="toggle-slider"></span></label>
+        </div>
+        <div class="option-row">
+          <div>
+            <div class="option-label">Batch size</div>
+            <div class="option-desc">Rows per transaction</div>
+          </div>
+          <input type="number" class="number-input" id="opt-batch" value="1000" min="1" max="50000">
+        </div>
+        <div class="option-row">
+          <div>
+            <div class="option-label">Stop on error</div>
+            <div class="option-desc">Abort if any row fails</div>
+          </div>
+          <label class="toggle"><input type="checkbox" id="opt-stoponerror" checked><span class="toggle-slider"></span></label>
+        </div>
+      </div>
+
+      <!-- Summary -->
+      <div class="options-section" id="summary-section">
+        <div class="options-title">Summary</div>
+        <div id="summary-content" style="color:var(--muted);font-size:12px">No migration configured.</div>
+      </div>
+
+      <!-- Preview + result area -->
+      <div id="preview-area" style="flex:1;overflow-y:auto"></div>
+
+      <!-- Run buttons -->
+      <div class="run-section">
+        <button class="btn-preview" onclick="previewMigration()">Preview first 5 rows →</button>
+        <button class="btn-migrate" id="run-btn" onclick="runMigration()" disabled>
+          <span id="run-label">Run Migration</span>
+        </button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── State ────────────────────────────────────────────────────────────────
+const state = {
+  tableView: 'oracle',   // which DB the left panel shows
+  oracleTables: [],
+  pgTables: [],
+  sourceTable: null,
+  targetTable: null,
+  oracleColumns: [],
+  pgColumns: [],
+  mappings: [],          // [{source_col, target_col, default_value}]
+};
+
+// ── Init ─────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  checkConnections();
+  loadTables('oracle');
+  loadTables('pg');
+});
+
+async function checkConnections() {
+  try {
+    const r = await fetch('/api/connections/');
+    const d = await r.json();
+    updateBadge('oracle', d.oracle.connected);
+    updateBadge('pg', d.postgres.connected);
+  } catch(e) {}
+}
+
+function updateBadge(db, ok) {
+  const dot = document.getElementById(db === 'oracle' ? 'oracle-dot' : 'pg-dot');
+  const lbl = document.getElementById(db === 'oracle' ? 'oracle-status' : 'pg-status');
+  dot.style.opacity = ok ? 1 : 0.4;
+  lbl.textContent = db === 'oracle'
+    ? (ok ? 'Oracle ✓' : 'Oracle (mock)')
+    : (ok ? 'PostgreSQL ✓' : 'PostgreSQL (mock)');
+}
+
+// ── Table loading ─────────────────────────────────────────────────────────
+async function loadTables(db) {
+  const r = await fetch(`/api/tables/?db=${db}`);
+  const d = await r.json();
+  if (db === 'oracle') {
+    state.oracleTables = d.tables;
+  } else {
+    state.pgTables = d.tables;
+  }
+  if ((db === 'oracle' && state.tableView === 'oracle') ||
+      (db === 'pg' && state.tableView === 'pg')) {
+    renderTableList();
+  }
+}
+
+function switchTableView(panel, db) {
+  state.tableView = db;
+  document.getElementById('src-oracle-btn').className = 'db-btn' + (db === 'oracle' ? ' active-oracle' : '');
+  document.getElementById('src-pg-btn').className = 'db-btn' + (db === 'pg' ? ' active-pg' : '');
+  document.getElementById('table-search').value = '';
+  renderTableList();
+}
+
+function filterTables() {
+  renderTableList();
+}
+
+function renderTableList() {
+  const q = document.getElementById('table-search').value.toLowerCase();
+  const tables = state.tableView === 'oracle' ? state.oracleTables : state.pgTables;
+  const filtered = q ? tables.filter(t => t.name.toLowerCase().includes(q)) : tables;
+  const list = document.getElementById('table-list');
+
+  if (!filtered.length) {
+    list.innerHTML = `<div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-text">No tables found</div></div>`;
+    return;
+  }
+
+  const isOracle = state.tableView === 'oracle';
+  list.innerHTML = filtered.map(t => {
+    const isSelected = isOracle
+      ? state.sourceTable === t.name
+      : state.targetTable === t.name;
+    const selClass = isSelected ? (isOracle ? 'selected' : 'selected-pg') : '';
+    return `<div class="table-item ${selClass}" onclick="selectTable('${t.name}','${state.tableView}')">
+      <div>
+        <div class="table-name">${t.name}</div>
+        <div style="margin-top:2px"><span class="schema-tag">${t.schema}</span></div>
+      </div>
+      <div class="table-rows">${formatRows(t.rows)}</div>
+    </div>`;
+  }).join('');
+}
+
+function formatRows(n) {
+  if (!n || n === 0) return '0 rows';
+  if (n >= 1000000) return (n/1000000).toFixed(1) + 'M';
+  if (n >= 1000) return (n/1000).toFixed(1) + 'K';
+  return n + '';
+}
+
+// ── Table selection ────────────────────────────────────────────────────────
+async function selectTable(name, db) {
+  if (db === 'oracle') {
+    state.sourceTable = name;
+    const r = await fetch(`/api/columns/?db=oracle&table=${name}`);
+    const d = await r.json();
+    state.oracleColumns = d.columns;
+    toast(`Source: ${name} (${d.columns.length} columns)`, 'info');
+  } else {
+    state.targetTable = name;
+    const r = await fetch(`/api/columns/?db=pg&table=${name}`);
+    const d = await r.json();
+    state.pgColumns = d.columns;
+    toast(`Target: ${name} (${d.columns.length} columns)`, 'info');
+  }
+  renderTableList();
+  if (state.sourceTable && state.targetTable) {
+    autoMap();
+  } else {
+    renderMappingArea();
+  }
+  updateSummary();
+}
+
+// ── Auto-mapping ───────────────────────────────────────────────────────────
+function autoMap() {
+  state.mappings = state.pgColumns.map(pgCol => {
+    // Try exact match (case-insensitive)
+    const exact = state.oracleColumns.find(oc =>
+      oc.name.toLowerCase() === pgCol.name.toLowerCase()
+    );
+    if (exact) return { source_col: exact.name, target_col: pgCol.name, default_value: '' };
+
+    // Try fuzzy: strip underscores, match substrings
+    const pgClean = pgCol.name.replace(/_/g, '').toLowerCase();
+    const fuzzy = state.oracleColumns.find(oc =>
+      oc.name.replace(/_/g, '').toLowerCase() === pgClean
+    );
+    if (fuzzy) return { source_col: fuzzy.name, target_col: pgCol.name, default_value: '' };
+
+    return { source_col: '', target_col: pgCol.name, default_value: '' };
+  });
+  renderMappingArea();
+  updateSummary();
+  document.getElementById('run-btn').disabled = false;
+}
+
+// ── Mapping UI ─────────────────────────────────────────────────────────────
+function renderMappingArea() {
+  const area = document.getElementById('mapping-area');
+  const sub = document.getElementById('mapping-subtitle');
+
+  if (!state.sourceTable || !state.targetTable) {
+    sub.textContent = 'Select source and target tables';
+    area.innerHTML = `<div class="empty-state"><div class="empty-icon">🗂️</div><div class="empty-text">Select a source table from Oracle<br>and a target table from PostgreSQL.</div></div>`;
+    return;
+  }
+
+  sub.textContent = `${state.sourceTable} → ${state.targetTable} • ${state.mappings.length} columns`;
+
+  const oraOptions = `<option value="">— unmapped —</option>` +
+    state.oracleColumns.map(c => `<option value="${c.name}">${c.name} (${c.type})</option>`).join('');
+
+  const rows = state.mappings.map((m, i) => {
+    const pgCol = state.pgColumns.find(c => c.name === m.target_col);
+    const badges = [];
+    if (pgCol?.pk) badges.push(`<span class="col-badge col-pk">PK</span>`);
+    if (pgCol && !pgCol.nullable) badges.push(`<span class="col-badge col-notnull">NOT NULL</span>`);
+    const hasSrc = !!m.source_col;
+    return `<div class="mapping-row ${hasSrc ? 'has-mapping' : ''}" id="row-${i}">
+      <select class="mapping-select" onchange="updateMapping(${i},'source_col',this.value)">
+        ${oraOptions.replace(`value="${m.source_col}"`, `value="${m.source_col}" selected`)}
+      </select>
+      <div class="mapping-arrow">→</div>
+      <div>
+        <div style="font-family:var(--mono);font-size:12px;color:var(--text)">${m.target_col}</div>
+        <div style="margin-top:2px">${badges.join(' ')}</div>
+      </div>
+      <input class="default-input" type="text" placeholder="${hasSrc ? '' : 'default value'}"
+        value="${m.default_value || ''}"
+        ${hasSrc ? 'disabled style="opacity:0.3"' : ''}
+        oninput="updateMapping(${i},'default_value',this.value)" />
+      <button class="btn-remove" onclick="removeMapping(${i})" title="Remove">✕</button>
+    </div>`;
+  }).join('');
+
+  area.innerHTML = `
+    <div class="table-pair">
+      <div class="table-box table-box-oracle">
+        <div class="table-box-label">Oracle Source</div>
+        <div>${state.sourceTable}</div>
+      </div>
+      <div class="arrow-icon">→</div>
+      <div class="table-box table-box-pg">
+        <div class="table-box-label">PostgreSQL Target</div>
+        <div>${state.targetTable}</div>
+      </div>
+    </div>
+    <div class="mappings-header">
+      <div>Source column</div>
+      <div></div>
+      <div>Target column</div>
+      <div>Default value</div>
+      <div></div>
+    </div>
+    ${rows}
+    <button class="btn-add" onclick="addMapping()">+ Add mapping row</button>
+  `;
+}
+
+function updateMapping(i, field, val) {
+  state.mappings[i][field] = val;
+  if (field === 'source_col') {
+    renderMappingArea();
+    updateSummary();
+  }
+}
+
+function removeMapping(i) {
+  state.mappings.splice(i, 1);
+  renderMappingArea();
+  updateSummary();
+}
+
+function addMapping() {
+  state.mappings.push({ source_col: '', target_col: 'new_column', default_value: '' });
+  renderMappingArea();
+}
+
+// ── Summary ────────────────────────────────────────────────────────────────
+function updateSummary() {
+  const el = document.getElementById('summary-content');
+  if (!state.sourceTable || !state.targetTable) {
+    el.innerHTML = '<span style="color:var(--muted)">No migration configured.</span>';
+    return;
+  }
+  const mapped = state.mappings.filter(m => m.source_col).length;
+  const defaults = state.mappings.filter(m => !m.source_col && m.default_value).length;
+  const unmapped = state.mappings.filter(m => !m.source_col && !m.default_value).length;
+  el.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div style="padding:8px;background:var(--surface2);border-radius:6px">
+        <div style="font-family:var(--mono);font-size:16px;color:var(--success)">${mapped}</div>
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-top:2px">Mapped</div>
+      </div>
+      <div style="padding:8px;background:var(--surface2);border-radius:6px">
+        <div style="font-family:var(--mono);font-size:16px;color:var(--warning)">${defaults}</div>
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-top:2px">Defaults</div>
+      </div>
+      ${unmapped > 0 ? `<div style="padding:8px;background:var(--surface2);border-radius:6px;grid-column:span 2">
+        <div style="font-family:var(--mono);font-size:16px;color:var(--danger)">${unmapped}</div>
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-top:2px">Unmapped (will be NULL)</div>
+      </div>` : ''}
+    </div>
+    <div style="margin-top:8px;font-size:11px;color:var(--muted)">
+      ${state.sourceTable} → ${state.targetTable}
+    </div>
+  `;
+}
+
+// ── Preview ────────────────────────────────────────────────────────────────
+async function previewMigration() {
+  if (!state.sourceTable || !state.targetTable || !state.mappings.length) {
+    toast('Configure a mapping first', 'error'); return;
+  }
+  const area = document.getElementById('preview-area');
+  area.innerHTML = `<div style="padding:16px;color:var(--muted);font-size:12px">Loading preview…</div>`;
+  try {
+    const r = await fetch('/api/preview/', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ source_table: state.sourceTable, mappings: state.mappings, limit: 5 })
+    });
+    const d = await r.json();
+    const cols = d.columns;
+    const rows = d.preview;
+    area.innerHTML = `
+      <div class="preview-area">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Sample output (${rows.length} rows)</div>
+        <div class="preview-table-wrap">
+          <table class="preview-table">
+            <thead><tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr></thead>
+            <tbody>${rows.map(row => `<tr>${cols.map(c => `<td>${row[c] ?? '<em style="color:var(--muted)">NULL</em>'}</td>`).join('')}</tr>`).join('')}</tbody>
+          </table>
+        </div>
+        <div style="font-size:10px;color:var(--muted);margin-top:6px">${d.note}</div>
+      </div>`;
+  } catch(e) { area.innerHTML = `<div style="padding:16px;color:var(--danger);font-size:12px">Preview error: ${e.message}</div>`; }
+}
+
+// ── Run migration ──────────────────────────────────────────────────────────
+async function runMigration() {
+  if (!state.sourceTable || !state.targetTable) { toast('Select source and target tables', 'error'); return; }
+  const activeMappings = state.mappings.filter(m => m.source_col || m.default_value !== undefined);
+  if (!activeMappings.length) { toast('Add at least one mapping', 'error'); return; }
+
+  const btn = document.getElementById('run-btn');
+  const lbl = document.getElementById('run-label');
+  btn.disabled = true;
+  btn.classList.add('running');
+  lbl.innerHTML = `<div class="spinner"></div> Migrating…`;
+
+  // Show progress simulation
+  const area = document.getElementById('preview-area');
+  area.innerHTML = `
+    <div style="padding:16px">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Running migration…</div>
+      <div class="progress-wrap">
+        <div class="progress-bar"><div class="progress-fill" id="prog" style="width:0%"></div></div>
+        <div class="progress-label" id="prog-lbl">Connecting to databases…</div>
+      </div>
+    </div>`;
+
+  animateProgress();
+
+  try {
+    const payload = {
+      source_table: state.sourceTable,
+      target_table: state.targetTable,
+      mappings: activeMappings,
+      batch_size: parseInt(document.getElementById('opt-batch').value) || 1000,
+      truncate_target: document.getElementById('opt-truncate').checked,
+      stop_on_error: document.getElementById('opt-stoponerror').checked,
+    };
+    const r = await fetch('/api/migrate/', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const d = await r.json();
+    showResult(d);
+    toast(d.success ? 'Migration complete!' : 'Migration failed', d.success ? 'success' : 'error');
+  } catch(e) {
+    showResult({ success: false, error: e.message });
+    toast('Network error', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove('running');
+    lbl.innerHTML = 'Run Migration';
+  }
+}
+
+let progInterval = null;
+function animateProgress() {
+  let pct = 0;
+  const msgs = ['Connecting…', 'Reading source…', 'Transforming…', 'Writing batches…', 'Committing…'];
+  let mi = 0;
+  clearInterval(progInterval);
+  progInterval = setInterval(() => {
+    pct = Math.min(pct + Math.random() * 8, 90);
+    const el = document.getElementById('prog');
+    const lbl = document.getElementById('prog-lbl');
+    if (el) el.style.width = pct + '%';
+    if (lbl && pct > mi * 20) { lbl.textContent = msgs[mi] || 'Processing…'; mi++; }
+  }, 300);
+}
+
+function showResult(d) {
+  clearInterval(progInterval);
+  const area = document.getElementById('preview-area');
+  const ok = d.success;
+  const modeTag = d.mode ? `<span class="mode-tag mode-${d.mode}">${d.mode}</span>` : '';
+  area.innerHTML = `
+    <div class="result-card ${ok ? 'success' : 'error'}">
+      <div class="result-title ${ok ? 'success' : 'error'}">
+        ${ok ? '✓ Migration Complete' : '✗ Migration Failed'}${modeTag}
+      </div>
+      ${ok ? `
+      <div class="result-stats">
+        <div class="stat-box green"><div class="stat-val">${(d.rows_written||0).toLocaleString()}</div><div class="stat-lbl">Rows written</div></div>
+        <div class="stat-box blue"><div class="stat-val">${d.duration_seconds ?? '-'}s</div><div class="stat-lbl">Duration</div></div>
+        <div class="stat-box orange"><div class="stat-val">${d.batches ?? 1}</div><div class="stat-lbl">Batches</div></div>
+        <div class="stat-box ${d.rows_failed > 0 ? 'red' : 'green'}"><div class="stat-val">${d.rows_failed ?? 0}</div><div class="stat-lbl">Failed</div></div>
+      </div>
+      <div style="margin-top:10px;font-size:11px;color:var(--muted)">${d.message || ''}</div>` :
+      `<div style="color:var(--danger);font-size:12px;font-family:var(--mono)">${d.error || 'Unknown error'}</div>`}
+    </div>`;
+}
+
+// ── Toast ──────────────────────────────────────────────────────────────────
+function toast(msg, type='info') {
+  const el = document.createElement('div');
+  el.className = `toast toast-${type}`;
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,82 @@
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+wheels/
+*.whl
+.eggs/
+MANIFEST
+
+# ── Virtual environments ──────────────────────────────────────────────────────
+venv/
+env/
+.env/
+.venv/
+ENV/
+denv/
+
+# ── Django ────────────────────────────────────────────────────────────────────
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+/staticfiles/
+/mediafiles/
+/media/
+/static/
+
+# ── Environment variables ─────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── IDE / Editor ──────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+coverage.xml
+*.cover
+nosetests.xml
+
+# ── MyPy / type checking ──────────────────────────────────────────────────────
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# ── Jupyter ───────────────────────────────────────────────────────────────────
+.ipynb_checkpoints
+*.ipynb
+
+# ── Oracle Instant Client (never commit binaries) ─────────────────────────────
+instantclient*/
+*.dll
+*.dylib
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Desktop.ini
