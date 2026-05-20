@@ -138,25 +138,33 @@ def test_connection(db_type):
 
 
 def list_oracle_tables():
-    """List tables from Oracle or return mock data."""
+    schema_name = os.getenv("ORACLE_SCHEMA", "AGROBIOTIC")
+    """List tables from a specific Oracle schema."""
     conn = get_oracle_connection()
     if conn:
         try:
             cursor = conn.cursor()
-            cursor.execute("""
+
+            cursor.execute(
+                """
                 SELECT t.table_name, t.num_rows, t.owner
                 FROM all_tables t
-                WHERE t.owner NOT IN ('SYS','SYSTEM','DBSNMP','SYSMAN','OUTLN','MDSYS',
-                    'ORDSYS','EXFSYS','DMSYS','WMSYS','CTXSYS','ANONYMOUS','XDB','ORDPLUGINS',
-                    'SI_INFORMTN_SCHEMA','OLAPSYS','MDDATA','IX','ORACLE_OCM','DIP','TSMSYS')
-                ORDER BY t.owner, t.table_name
-            """)
+                WHERE t.owner = :schema
+                ORDER BY t.table_name
+            """,
+                schema=schema_name.upper(),
+            )
+
             rows = cursor.fetchall()
+
             return [{"name": r[0], "rows": r[1] or 0, "schema": r[2]} for r in rows]
+
         except Exception as e:
             logger.error(f"Oracle table listing error: {e}")
+
         finally:
             conn.close()
+
     return MOCK_ORACLE_TABLES
 
 
@@ -208,40 +216,67 @@ def list_postgres_tables():
 
 
 def get_oracle_columns(table_name):
-    """Get columns for Oracle table."""
+    schema_name = os.getenv("ORACLE_SCHEMA", "AGROBIOTIC")
+
+    """Get columns for Oracle table with optional schema filter."""
     conn = get_oracle_connection()
+
     if conn:
         try:
             cursor = conn.cursor()
+
             cursor.execute(
                 """
-                SELECT c.column_name, c.data_type || 
-                    CASE WHEN c.data_precision IS NOT NULL 
-                         THEN '(' || c.data_precision || CASE WHEN c.data_scale > 0 THEN ',' || c.data_scale ELSE '' END || ')'
-                         WHEN c.char_length > 0 THEN '(' || c.char_length || ')'
-                         ELSE '' END as full_type,
+                SELECT 
+                    c.column_name,
+                    c.data_type ||
+                        CASE 
+                            WHEN c.data_precision IS NOT NULL THEN 
+                                '(' || c.data_precision || 
+                                CASE WHEN c.data_scale > 0 THEN ',' || c.data_scale ELSE '' END || ')'
+                            WHEN c.char_length > 0 THEN '(' || c.char_length || ')'
+                            ELSE '' 
+                        END AS full_type,
                     c.nullable,
-                    CASE WHEN pk.column_name IS NOT NULL THEN 'Y' ELSE 'N' END as is_pk
+                    CASE WHEN pk.column_name IS NOT NULL THEN 'Y' ELSE 'N' END AS is_pk
                 FROM all_tab_columns c
                 LEFT JOIN (
-                    SELECT cc.column_name FROM all_cons_columns cc
-                    JOIN all_constraints con ON con.constraint_name = cc.constraint_name
-                    WHERE con.constraint_type = 'P' AND con.table_name = :tbl
-                ) pk ON pk.column_name = c.column_name
+                    SELECT cc.owner, cc.table_name, cc.column_name
+                    FROM all_cons_columns cc
+                    JOIN all_constraints con 
+                        ON con.constraint_name = cc.constraint_name
+                       AND con.owner = cc.owner
+                    WHERE con.constraint_type = 'P'
+                ) pk 
+                    ON pk.column_name = c.column_name
+                   AND pk.table_name = c.table_name
+                   AND pk.owner = c.owner
                 WHERE c.table_name = :tbl
+                AND (:schema IS NULL OR c.owner = :schema)
                 ORDER BY c.column_id
-            """,
+                """,
                 tbl=table_name.upper(),
+                schema=(schema_name.upper() if schema_name else None),
             )
+
             rows = cursor.fetchall()
+
             return [
-                {"name": r[0], "type": r[1], "nullable": r[2] == "Y", "pk": r[3] == "Y"}
+                {
+                    "name": r[0],
+                    "type": r[1],
+                    "nullable": r[2] == "Y",
+                    "pk": r[3] == "Y",
+                }
                 for r in rows
             ]
+
         except Exception as e:
             logger.error(f"Oracle column error: {e}")
+
         finally:
             conn.close()
+
     return MOCK_ORACLE_COLUMNS.get(table_name.upper(), [])
 
 
